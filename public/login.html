@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Login - Ambulance GPS Tracking</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container login-container">
+    <header>
+      <h1>Admin Login</h1>
+      <div class="actions">
+        <a href="/" class="btn btn-secondary">Kembali ke Peta</a>
+      </div>
+    </header>
+    
+    <main>
+      <div class="login-form-container">
+        <form id="loginForm" class="login-form">
+          <div class="form-group">
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" required placeholder="Masukkan username admin">
+          </div>
+          <div class="form-group">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required placeholder="Masukkan password">
+          </div>
+          <div class="form-alert" id="loginAlert"></div>
+          <div class="form-group">
+            <button type="submit" class="btn btn-primary">Login</button>
+          </div>
+        </form>
+        <div class="login-help">
+          <h3>Informasi Login</h3>
+          <p>Gunakan username: <strong>admin1</strong>, <strong>admin2</strong>, atau <strong>admin3</strong></p>
+          <p>Password untuk semua admin: <strong>madiun123</strong></p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      const loginAlert = document.getElementById('loginAlert');
+      
+      // Clear previous alert
+      loginAlert.textContent = '';
+      loginAlert.classList.remove('alert-success', 'alert-error');
+      
+      // Send login request
+      fetch('/api/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ username, password })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          loginAlert.textContent = 'Login berhasil! Mengalihkan ke panel admin...';
+          loginAlert.classList.add('alert-success');
+          
+          // Redirect to admin page
+          setTimeout(() => {
+            window.location.href = '/admin';
+          }, 1000);
+        } else {
+          loginAlert.textContent = 'Login gagal: ' + (data.message || 'Username atau password salah');
+          loginAlert.classList.add('alert-error');
+        }
+      })
+      .catch(error => {
+        loginAlert.textContent = 'Terjadi kesalahan. Silakan coba lagi.';
+        loginAlert.classList.add('alert-error');
+        console.error('Error:', error);
+      });
+    });
+  </script>
+</body>
+</html>

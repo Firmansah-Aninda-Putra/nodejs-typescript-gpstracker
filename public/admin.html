@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Panel - Ambulance GPS Tracking</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Admin Control Panel</h1>
+      <div class="actions">
+        <a href="/" class="btn btn-secondary" target="_blank">Lihat Peta Utama</a>
+        <a href="/api/logout" class="btn btn-danger">Logout</a>
+      </div>
+    </header>
+    
+    <main class="admin-main">
+      <div class="control-panel">
+        <div class="panel-section">
+          <h2>Status GPS</h2>
+          <div class="toggle-switch">
+            <input type="checkbox" id="gpsToggle" class="toggle-input">
+            <label for="gpsToggle" class="toggle-label">
+              <span class="toggle-inner"></span>
+              <span class="toggle-switch-status"></span>
+            </label>
+          </div>
+          <div class="gps-status" id="gpsStatus">GPS Tidak Aktif</div>
+        </div>
+        
+        <div class="panel-section">
+          <h2>Informasi Lokasi</h2>
+          <div class="location-info">
+            <div class="info-row">
+              <span class="info-label">Latitude:</span>
+              <span class="info-value" id="currentLat">-</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Longitude:</span>
+              <span class="info-value" id="currentLng">-</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Akurasi:</span>
+              <span class="info-value" id="accuracy">-</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Terakhir Update:</span>
+              <span class="info-value" id="lastUpdate">-</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="panel-section">
+          <h2>Kontrol Manual</h2>
+          <div class="manual-control">
+            <p>Gunakan kontrol ini jika GPS tidak berfungsi atau untuk pengujian:</p>
+            <div class="form-group">
+              <label for="manualLat">Latitude</label>
+              <input type="number" id="manualLat" step="0.000001" placeholder="Contoh: -7.613">
+            </div>
+            <div class="form-group">
+              <label for="manualLng">Longitude</label>
+              <input type="number" id="manualLng" step="0.000001" placeholder="Contoh: 111.513">
+            </div>
+            <button id="updateManual" class="btn">Update Lokasi</button>
+          </div>
+        </div>
+      </div>
+      
+      <div class="admin-map-container">
+        <div class="map-controls">
+          <label>Map Mode: </label>
+          <select id="adminMapModeSelector">
+            <option value="normal">Normal</option>
+            <option value="satellite">Satellite</option>
+          </select>
+        </div>
+        <div id="adminMap"></div>
+      </div>
+    </main>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+  <script>
+    // Initialize map centered on Madiun, Indonesia
+    const adminMap = L.map('adminMap').setView([-7.613, 111.513], 13);
+    
+    // Map layers
+    const normalLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    });
+    
+    const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+    });
+    
+    // Set default layer
+    normalLayer.addTo(adminMap);
+    
+    // Map mode selector
+    const adminMapModeSelector = document.getElementById('adminMapModeSelector');
+    adminMapModeSelector.addEventListener('change', function() {
+      if (this.value === 'normal') {
+        adminMap.removeLayer(satelliteLayer);
+        normalLayer.addTo(adminMap);
+      } else {
+        adminMap.removeLayer(normalLayer);
+        satelliteLayer.addTo(adminMap);
+      }
+    });
+    
+    // UI elements
+    const gpsToggle = document.getElementById('gpsToggle');
+    const gpsStatus = document.getElementById('gpsStatus');
+    const currentLat = document.getElementById('currentLat');
+    const currentLng = document.getElementById('currentLng');
+    const accuracy = document.getElementById('accuracy');
+    const lastUpdate = document.getElementById('lastUpdate');
+    const manualLat = document.getElementById('manualLat');
+    const manualLng = document.getElementById('manualLng');
+    const updateManualBtn = document.getElementById('updateManual');
+    
+    // Position marker
+    let currentPositionMarker = null;
+    
+    // Current GPS state
+    let gpsActive = false;
+    let watchId = null;
+    let currentPosition = {
+      lat: -7.613,
+      lng: 111.513
+    };
+    
+    // Create position marker icon
+    const positionIcon = L.divIcon({
+      className: 'position-icon',
+      html: '<div class="position-marker">🚑</div>',
+      iconSize: [40, 40],
+      iconAnchor: [20, 20]
+    });
+    
+    // Initialize position marker
+    function initPositionMarker(lat, lng) {
+      if (currentPositionMarker) {
+        adminMap.removeLayer(currentPositionMarker);
+      }
+      
+      currentPositionMarker = L.marker([lat, lng], { icon: positionIcon })
+        .addTo(adminMap)
+        .bindPopup('Posisi Ambulans Anda');
+        
+      adminMap.setView([lat, lng], 15);
+    }
+    
+    // Update position on map and send to server
+    function updatePosition(lat, lng, acc = null, timestamp = Date.now()) {
+      currentPosition.lat = lat;
+      currentPosition.lng = lng;
+      
+      // Update UI
+      currentLat.textContent = lat.toFixed(6);
+      currentLng.textContent = lng.toFixed(6);
+      
+      if (acc !== null) {
+        accuracy.textContent = `${acc.toFixed(1)} meter`;
+      }
+      
+      lastUpdate.textContent = new Date(timestamp).toLocaleTimeString();
+      
+      // Update marker position
+      if (currentPositionMarker) {
+        currentPositionMarker.setLatLng([lat, lng]);
+      } else {
+        initPositionMarker(lat, lng);
+      }
+      
+      // Send update to server
+      sendPositionUpdate(lat, lng, gpsActive);
+    }
+    
+    // Send position update to server
+    function sendPositionUpdate(lat, lng, active) {
+      fetch('/api/updateLocation', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ lat, lng, active })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (!data.success) {
+          console.error('Failed to update location:', data.message);
+        }
+      })
+      .catch(error => {
+        console.error('Error updating location:', error);
+      });
+    }
+    
+    // Start GPS tracking
+    function startGPSTracking() {
+      if (!navigator.geolocation) {
+        alert('Geolocation tidak didukung di browser Anda.');
+        gpsToggle.checked = false;
+        return;
+      }
+      
+      gpsActive = true;
+      gpsStatus.textContent = 'GPS Aktif';
+      gpsStatus.className = 'gps-status active';
+      
+      // Update server with current active status
+      sendPositionUpdate(currentPosition.lat, currentPosition.lng, true);
+      
+      // Watch position
+      watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          const { latitude, longitude, accuracy: acc } = position.coords;
+          const timestamp = position.timestamp;
+          
+          updatePosition(latitude, longitude, acc, timestamp);
+        },
+        (error) => {
+          console.error('Geolocation error:', error);
+          gpsStatus.textContent = `GPS Error: ${getPositionErrorMessage(error)}`;
+          gpsStatus.className = 'gps-status error';
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 5000,
+          maximumAge: 0
+        }
+      );
+    }
+    
+    // Stop GPS tracking
+    function stopGPSTracking() {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+      
+      gpsActive = false;
+      gpsStatus.textContent = 'GPS Tidak Aktif';
+      gpsStatus.className = 'gps-status';
+      
+      // Update server with inactive status
+      sendPositionUpdate(currentPosition.lat, currentPosition.lng, false);
+    }
+    
+    // Get position error message
+    function getPositionErrorMessage(error) {
+      switch (error.code) {
+        case error.PERMISSION_DENIED:
+          return 'Akses lokasi ditolak';
+        case error.POSITION_UNAVAILABLE:
+          return 'Informasi lokasi tidak tersedia';
+        case error.TIMEOUT:
+          return 'Permintaan lokasi timeout';
+        default:
+          return 'Error yang tidak diketahui';
+      }
+    }
+    
+    // GPS Toggle event
+    gpsToggle.addEventListener('change', function() {
+      if (this.checked) {
+        startGPSTracking();
+      } else {
+        stopGPSTracking();
+      }
+    });
+    
+    // Manual position update
+    updateManualBtn.addEventListener('click', function() {
+      const lat = parseFloat(manualLat.value);
+      const lng = parseFloat(manualLng.value);
+      
+      if (isNaN(lat) || isNaN(lng)) {
+        alert('Mohon masukkan nilai latitude dan longitude yang valid.');
+        return;
+      }
+      
+      updatePosition(lat, lng);
+      
+      // Center map on new position
+      adminMap.setView([lat, lng], 15);
+    });
+    
+    // Initialize admin page
+    window.addEventListener('load', function() {
+      // Try to get initial position
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            const { latitude, longitude, accuracy: acc } = position.coords;
+            currentPosition.lat = latitude;
+            currentPosition.lng = longitude;
+            
+            // Initialize position fields
+            currentLat.textContent = latitude.toFixed(6);
+            currentLng.textContent = longitude.toFixed(6);
+            accuracy.textContent = `${acc.toFixed(1)} meter`;
+            lastUpdate.textContent = new Date().toLocaleTimeString();
+            
+            // Set manual input default values
+            manualLat.value = latitude.toFixed(6);
+            manualLng.value = longitude.toFixed(6);
+            
+            // Update map
+            initPositionMarker(latitude, longitude);
+          },
+          (error) => {
+            console.error('Error getting current position:', error);
+            // Use default position
+            initPositionMarker(currentPosition.lat, currentPosition.lng);
+            
+            // Set manual input default values
+            manualLat.value = currentPosition.lat.toFixed(6);
+            manualLng.value = currentPosition.lng.toFixed(6);
+          }
+        );
+      } else {
+        // Use default position if geolocation not available
+        initPositionMarker(currentPosition.lat, currentPosition.lng);
+        
+       // Set manual input default values
+       manualLat.value = currentPosition.lat.toFixed(6);
+       manualLng.value = currentPosition.lng.toFixed(6);
+     }
+   });
+   
+   // Check window focus (when user returns to the tab)
+   window.addEventListener('focus', function() {
+     // If GPS is active, update the position
+     if (gpsActive && navigator.geolocation) {
+       navigator.geolocation.getCurrentPosition(
+         (position) => {
+           const { latitude, longitude, accuracy: acc } = position.coords;
+           updatePosition(latitude, longitude, acc, position.timestamp);
+         },
+         (error) => {
+           console.error('Error updating position on focus:', error);
+         }
+       );
+     }
+   });
+   
+   // Setup periodic updates even when no movement is detected
+   if (gpsActive) {
+     setInterval(() => {
+       if (gpsActive && navigator.geolocation) {
+         navigator.geolocation.getCurrentPosition(
+           (position) => {
+             const { latitude, longitude, accuracy: acc } = position.coords;
+             updatePosition(latitude, longitude, acc, position.timestamp);
+           },
+           (error) => {
+             console.error('Error in periodic update:', error);
+           }
+         );
+       }
+     }, 30000); // Update every 30 seconds
+   }
+ </script>
+</body>
+</html>

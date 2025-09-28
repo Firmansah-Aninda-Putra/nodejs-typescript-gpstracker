@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ambulance GPS Tracking</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Ambulance GPS Tracking System</h1>
+      <div class="actions">
+        <div class="map-controls">
+          <label>Map Mode: </label>
+          <select id="mapModeSelector">
+            <option value="normal">Normal</option>
+            <option value="satellite">Satellite</option>
+          </select>
+        </div>
+        <a href="/login" class="btn">Login Sebagai Admin</a>
+      </div>
+    </header>
+    
+    <main>
+      <div id="map"></div>
+      <div class="status-panel">
+        <h3>Status Ambulans</h3>
+        <div id="ambulanceList">
+          <p class="no-ambulance">Tidak ada ambulans yang aktif saat ini</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+  <script>
+    // Initialize map centered on Madiun, Indonesia
+    const map = L.map('map').setView([-7.613, 111.513], 13);
+    
+    // Map layers
+    const normalLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    });
+    
+    const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+    });
+    
+    // Set default layer
+    normalLayer.addTo(map);
+    
+    // Map mode selector
+    const mapModeSelector = document.getElementById('mapModeSelector');
+    mapModeSelector.addEventListener('change', function() {
+      if (this.value === 'normal') {
+        map.removeLayer(satelliteLayer);
+        normalLayer.addTo(map);
+      } else {
+        map.removeLayer(normalLayer);
+        satelliteLayer.addTo(map);
+      }
+    });
+    
+    // Connect to Socket.IO
+    const socket = io();
+    
+    // Store ambulance markers
+    const ambulanceMarkers = {};
+    const ambulanceIcons = {};
+    
+    // Create ambulance icon
+    function createAmbulanceIcon(adminId) {
+      return L.divIcon({
+        className: 'ambulance-icon',
+        html: `<div class="ambulance-marker" data-id="${adminId}">🚑</div>`,
+        iconSize: [40, 40],
+        iconAnchor: [20, 20]
+      });
+    }
+    
+    // Update ambulance list in status panel
+    function updateAmbulanceList(ambulances) {
+      const ambulanceList = document.getElementById('ambulanceList');
+      ambulanceList.innerHTML = '';
+      
+      const activeAmbulances = ambulances.filter(amb => amb.active);
+      
+      if (activeAmbulances.length === 0) {
+        const noAmbulance = document.createElement('p');
+        noAmbulance.className = 'no-ambulance';
+        noAmbulance.textContent = 'Tidak ada ambulans yang aktif saat ini';
+        ambulanceList.appendChild(noAmbulance);
+      } else {
+        activeAmbulances.forEach(ambulance => {
+          const item = document.createElement('div');
+          item.className = 'ambulance-item';
+          item.innerHTML = `
+            <div class="ambulance-info">
+              <span class="ambulance-id">Ambulans ${ambulance.adminId}</span>
+              <span class="ambulance-status ${ambulance.active ? 'active' : 'inactive'}">
+                ${ambulance.active ? 'Aktif' : 'Tidak Aktif'}
+              </span>
+            </div>
+            <div class="ambulance-location">
+              <span>Lokasi: ${ambulance.lat.toFixed(6)}, ${ambulance.lng.toFixed(6)}</span>
+            </div>
+          `;
+          ambulanceList.appendChild(item);
+        });
+      }
+    }
+    
+    // Handle ambulance updates from server
+    socket.on('ambulanceUpdate', (ambulances) => {
+      // Update markers on map
+      ambulances.forEach(ambulance => {
+        if (ambulance.active) {
+          // Create or update marker
+          if (!ambulanceMarkers[ambulance.id]) {
+            const icon = createAmbulanceIcon(ambulance.adminId);
+            ambulanceIcons[ambulance.id] = icon;
+            ambulanceMarkers[ambulance.id] = L.marker([ambulance.lat, ambulance.lng], { icon })
+              .addTo(map)
+              .bindPopup(`Ambulans ${ambulance.adminId}`);
+          } else {
+            ambulanceMarkers[ambulance.id].setLatLng([ambulance.lat, ambulance.lng]);
+          }
+        } else if (ambulanceMarkers[ambulance.id]) {
+          // Remove inactive ambulance from map
+          map.removeLayer(ambulanceMarkers[ambulance.id]);
+          delete ambulanceMarkers[ambulance.id];
+          delete ambulanceIcons[ambulance.id];
+        }
+      });
+      
+      // Update status panel
+      updateAmbulanceList(ambulances);
+    });
+    
+    // Fetch initial ambulance data
+    fetch('/api/ambulances')
+      .then(response => response.json())
+      .then(ambulances => {
+        updateAmbulanceList(ambulances);
+        
+        // Add active ambulances to map
+        ambulances.filter(amb => amb.active).forEach(ambulance => {
+          const icon = createAmbulanceIcon(ambulance.adminId);
+          ambulanceIcons[ambulance.id] = icon;
+          ambulanceMarkers[ambulance.id] = L.marker([ambulance.lat, ambulance.lng], { icon })
+            .addTo(map)
+            .bindPopup(`Ambulans ${ambulance.adminId}`);
+        });
+      })
+      .catch(error => {
+        console.error('Error fetching ambulances:', error);
+      });
+  </script>
+</body>
+</html>
