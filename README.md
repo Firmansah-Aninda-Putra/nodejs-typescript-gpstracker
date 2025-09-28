@@ -1,2 +1,2 @@
-# nodejs-typescript-gpstracker
+# nodejs-gpstracker
 GPS TRACKER USING TYPESCRIPT WITH NODE JS 
